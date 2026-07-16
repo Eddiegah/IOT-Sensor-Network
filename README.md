@@ -1,229 +1,413 @@
-# IoT Sensor Network Simulator
+<div align="center">
 
-A working demonstration of **distributed systems and networking concepts** using the real MQTT protocol — the same protocol used by billions of IoT devices in the real world (smart home hubs, industrial sensors, Tesla vehicles, AWS IoT).
+# 📡 IoT Sensor Network Simulator
 
-Five independent simulated sensor nodes publish data over MQTT to a central hub. The hub performs fault detection and feeds a live Streamlit dashboard. Everything communicates through a real message broker (Mosquitto), not a fake in-process simulation.
+**A real distributed systems project — not a toy script.**
 
-> Built to learn and demonstrate: MQTT pub/sub, distributed process architecture, heartbeat-based fault detection, and real-time monitoring.
+Built with the actual MQTT protocol used by AWS IoT, Tesla, and billions of embedded devices worldwide.
+
+[![Python](https://img.shields.io/badge/Python-3.9--3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![MQTT](https://img.shields.io/badge/MQTT-Mosquitto_2.x-660066?style=for-the-badge&logo=eclipse-mosquitto&logoColor=white)](https://mosquitto.org)
+[![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io)
+[![SQLite](https://img.shields.io/badge/Storage-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://sqlite.org)
+[![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
+
+</div>
 
 ---
 
-## What it looks like
+## 🎬 What's happening under the hood
 
 ```
-┌─────────────┐     MQTT publish      ┌─────────────────────┐
-│  node_1     │ ──────────────────►   │                     │
-│ temperature │                       │  Mosquitto Broker   │
-├─────────────┤                       │    localhost:1883   │
-│  node_2     │ ──────────────────►   │                     │
-│ temperature │                       └──────────┬──────────┘
-├─────────────┤                                  │ MQTT subscribe
-│  node_3     │ ──────────────────►              ▼
-│  humidity   │                       ┌─────────────────────┐
-├─────────────┤                       │       hub.py        │
-│  node_4     │ ──────────────────►   │  - logs to SQLite   │
-│  humidity   │                       │  - fault detection  │
-├─────────────┤                       │  - heartbeat watch  │
-│  node_5     │ ──────────────────►   └──────────┬──────────┘
-│   motion    │                                  │ polls DB
-└─────────────┘                                  ▼
-                                       ┌─────────────────────┐
-                                       │   Streamlit app.py  │
-                                       │   live dashboard    │
-                                       └─────────────────────┘
+  Every 3–5 seconds, each node wakes up, generates a reading, and shouts it
+  into the network. The hub is always listening. The dashboard is always watching.
+
+  ╔══════════════════════════════════════════════════════════════════════════╗
+  ║                     LIVE SENSOR NETWORK (simulated)                     ║
+  ╠══════════════════════════════════════════════════════════════════════════╣
+  ║                                                                          ║
+  ║   🌡  node_1  temp=22.4°C  ──┐                                          ║
+  ║   🌡  node_2  temp=19.8°C  ──┤                                          ║
+  ║   💧  node_3  humi=58.3%   ──┼──►  [ Mosquitto Broker :1883 ]           ║
+  ║   💧  node_4  humi=61.1%   ──┤          │                               ║
+  ║   👁  node_5  motion=0     ──┘          │ subscribe sensors/+/+         ║
+  ║                                         ▼                               ║
+  ║                                  [ hub.py ]                             ║
+  ║                                  ├─ logs readings to SQLite             ║
+  ║                                  ├─ tracks heartbeats per node          ║
+  ║                                  └─ 15s silence = ❌ OFFLINE            ║
+  ║                                         │                               ║
+  ║                                         ▼                               ║
+  ║                              [ Streamlit Dashboard ]                    ║
+  ║                              ├─ 🟢 node_1  22.4°C   2s ago             ║
+  ║                              ├─ 🟢 node_2  19.8°C   4s ago             ║
+  ║                              ├─ 🔴 node_3  OFFLINE  23s ago  ← ALERT   ║
+  ║                              ├─ 🟢 node_4  61.1%    1s ago             ║
+  ║                              └─ 🟢 node_5  motion=0  3s ago            ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
----
-
-## Concepts demonstrated
-
-### MQTT publish/subscribe
-MQTT is a lightweight messaging protocol designed for constrained devices and unreliable networks. A **broker** (Mosquitto) sits in the middle. Publishers and subscribers never talk directly — they're fully decoupled.
-
-- Nodes publish to: `sensors/{node_id}/{sensor_type}`
-- Nodes publish heartbeats to: `sensors/{node_id}/heartbeat`
-- The hub subscribes to: `sensors/+/+` (the `+` wildcard matches one topic level)
-
-This is exactly how a real smart home hub, industrial SCADA system, or fleet tracker works.
-
-### Distributed process architecture
-Each sensor node is a completely independent OS process with its own MQTT connection, its own data generation loop, and no shared memory with any other node. Killing one doesn't affect the others. This mirrors real embedded hardware — each physical device is independent.
-
-### Heartbeat-based fault detection
-A classic pattern in distributed systems (used in Kubernetes, ZooKeeper, distributed databases, etc.):
-
-1. Every node publishes a `heartbeat` message every 5 seconds
-2. The hub's fault-detection thread checks every 5 seconds: *"has it been more than 15 seconds since the last heartbeat for this node?"*
-3. If yes → mark **offline**, log an alert
-4. When the heartbeat resumes → mark **online**, log a recovery alert
-
-This distinguishes a crashed/offline node from one that's just not producing readings, and avoids false alarms for nodes in a known sleep cycle.
-
-### Real-time monitoring dashboard
-The Streamlit dashboard polls the SQLite database and reruns every 3 seconds, showing:
-- Per-node status (🟢 online / 🔴 offline) with last reading and timestamp
-- Rolling time-series charts per sensor type (Plotly)
-- Alert log of fault events and anomalous readings
+> Kill any node with one command. The hub detects the silence. The dashboard goes red.
+> Revive it. It comes back online. The whole thing is live.
 
 ---
 
-## Tech stack
+## ✨ Why this project exists
 
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| Message broker | Mosquitto 2.x | Industry-standard open-source MQTT broker |
-| MQTT client | paho-mqtt 2.1.0 | Official Eclipse MQTT Python client |
-| Database | SQLite (stdlib) | Zero-dependency time-series store |
-| Dashboard | Streamlit 1.36 | Fast Python-native web UI |
-| Charts | Plotly 5.22 | Interactive time-series charts |
-| Data | pandas 2.2.2 | DataFrame queries from SQLite |
+Most IoT tutorials fake it — one script, fake pub/sub, no real network, no real protocol.
+
+This project uses **real MQTT** over a **real broker** with **real distributed processes**. The same architecture pattern behind:
+
+| Real System | What it shares with this project |
+|-------------|----------------------------------|
+| 🏠 Smart home hubs (Google Home, Amazon Echo) | MQTT pub/sub between devices and hub |
+| 🏭 Industrial SCADA systems | Sensor nodes → central aggregator → dashboard |
+| 🚗 Tesla vehicle telemetry | Heartbeat-based liveness detection |
+| ☁️ AWS IoT Core | Topic-based routing, wildcard subscriptions |
+| ⚓ Kubernetes | Heartbeat timeouts → node marked NotReady |
 
 ---
 
-## Project structure
+## 🧩 Core concepts demonstrated
+
+<details>
+<summary><b>📨 MQTT Publish / Subscribe</b> — click to expand</summary>
+
+<br>
+
+MQTT is a messaging protocol designed in 1999 for oil pipeline monitoring over satellite — low bandwidth, unreliable connections, constrained devices. Those same properties make it the dominant IoT protocol today.
+
+**How it works here:**
+
+```
+node_1 publishes ──► sensors/node_1/temperature  ──► broker ──► hub receives
+node_1 publishes ──► sensors/node_1/heartbeat    ──► broker ──► hub receives
+hub subscribes   ──► sensors/+/+                 (+ matches any single level)
+```
+
+Publishers and subscribers never connect to each other — the broker decouples them entirely. A node doesn't know or care that the hub exists.
+
+</details>
+
+<details>
+<summary><b>🖥️ Distributed Process Architecture</b> — click to expand</summary>
+
+<br>
+
+Each sensor node is a **completely independent OS process** with:
+- Its own MQTT client connection
+- Its own data generation loop
+- No shared memory with any other node
+- No knowledge that other nodes exist
+
+```
+PID 21564  sensor_node.py  node_1  temperature
+PID 11088  sensor_node.py  node_2  temperature
+PID  7896  sensor_node.py  node_3  humidity
+PID  4208  sensor_node.py  node_4  humidity
+PID  3892  sensor_node.py  node_5  motion
+PID  9100  hub.py          ← subscribes to all of them
+```
+
+Kill PID 7896 — the others keep running. The hub notices the silence. This is how real embedded hardware behaves.
+
+</details>
+
+<details>
+<summary><b>💓 Heartbeat-based Fault Detection</b> — click to expand</summary>
+
+<br>
+
+A classic distributed systems pattern used in Kubernetes, ZooKeeper, Consul, and every serious distributed database.
+
+**The algorithm:**
+
+```
+Every 5 seconds:
+  node → publishes heartbeat to sensors/{node_id}/heartbeat
+
+Every 5 seconds (hub fault-detection thread):
+  for each known node:
+    if (now - last_heartbeat) > 15 seconds:
+      mark node OFFLINE
+      log alert
+
+When heartbeat resumes:
+  if node was OFFLINE:
+    mark node ONLINE
+    log recovery alert
+```
+
+**Sleep-mode awareness:** Nodes can publish their expected sleep schedule before going dormant. The hub uses this to avoid false-alarming — it knows the difference between "dead" and "intentionally sleeping."
+
+</details>
+
+<details>
+<summary><b>📊 Real-time Monitoring Dashboard</b> — click to expand</summary>
+
+<br>
+
+The Streamlit dashboard polls SQLite every 3 seconds and shows:
+
+- **Node status grid** — per-node cards with color-coded online/offline status, current reading, last-seen timestamp
+- **Time-series charts** — rolling Plotly charts for temperature, humidity, and motion
+- **Alert log** — timestamped log of every offline event, recovery, and anomalous reading
+
+SQLite is used as a lightweight shared state store — the hub writes, the dashboard reads. No additional infrastructure needed.
+
+</details>
+
+---
+
+## 🗂 Project structure
 
 ```
 iot-sensor-network/
+│
 ├── src/
-│   ├── sensor_node.py      # Simulated sensor device — MQTT publisher
-│   ├── hub.py              # Central hub — MQTT subscriber, fault detector
-│   ├── fault_injector.py   # Kill/revive nodes to demo fault detection
-│   └── launch_nodes.py     # Spawns all 5 nodes as separate processes
-├── app.py                  # Streamlit live dashboard
-├── mqtt_test.py            # Connectivity verification (run before sim)
-├── data/
-│   └── sensor_data.db      # SQLite store — created at runtime (gitignored)
-├── requirements.txt
+│   ├── sensor_node.py      # 🌡  Independent sensor device — MQTT publisher
+│   │                       #     Generates realistic temperature / humidity / motion
+│   │                       #     Publishes readings + heartbeats
+│   │
+│   ├── hub.py              # 🖥  Central hub — MQTT subscriber
+│   │                       #     Logs all readings to SQLite
+│   │                       #     Fault-detection thread watches heartbeats
+│   │
+│   ├── launch_nodes.py     # 🚀  Spawns all 5 nodes as separate OS processes
+│   │                       #     Writes PID records so fault_injector can find them
+│   │
+│   └── fault_injector.py   # 💀  Kill / revive individual nodes on demand
+│                           #     Demonstrates fault detection live
+│
+├── app.py                  # 📊  Streamlit dashboard — live monitoring UI
+├── mqtt_test.py            # ✅  Connectivity verification script
+├── requirements.txt        # 📦  Pinned dependencies
+├── .gitignore
 └── README.md
 ```
 
 ---
 
-## Setup & running
+## ⚙️ Tech stack
+
+| Layer | Technology | Version | Role |
+|-------|-----------|---------|------|
+| Message broker | [Mosquitto](https://mosquitto.org) | 2.x | Routes all MQTT messages |
+| MQTT client | [paho-mqtt](https://pypi.org/project/paho-mqtt/) | 2.1.0 | Python MQTT pub/sub |
+| Database | SQLite | stdlib | Time-series + state store |
+| Dashboard | [Streamlit](https://streamlit.io) | 1.36.0 | Live web UI |
+| Charts | [Plotly](https://plotly.com) | 5.22.0 | Interactive time-series |
+| Data wrangling | [pandas](https://pandas.pydata.org) | 2.2.2 | DB → DataFrame queries |
+
+---
+
+## 🚀 Getting started
 
 ### Prerequisites
-- Python 3.9–3.12
-- **Mosquitto MQTT broker** — this is a system service, not a pip package
 
-### 1. Install Mosquitto
+- Python **3.9 – 3.12**
+- **Mosquitto** MQTT broker — this is a system service, not a pip package
 
-Download from **https://mosquitto.org/download/** (Windows 64-bit installer).
+### Step 1 — Install Mosquitto
 
-After installing, start the service:
-```
-# Windows (run PowerShell as Administrator)
+> ⚠️ **This step is required.** The hub and nodes will fail with `ConnectionRefusedError` if Mosquitto isn't running.
+
+**Windows:**
+1. Download the installer from **https://mosquitto.org/download/** (64-bit `.exe`)
+2. Run it — installs as a Windows service automatically
+3. Start the service (PowerShell as Administrator):
+```powershell
 net start mosquitto
-
-# Verify it's listening on port 1883
+```
+4. Verify it's listening:
+```powershell
 netstat -an | findstr 1883
+# Should show: 0.0.0.0:1883   LISTENING
 ```
 
-### 2. Python environment
+**macOS:**
+```bash
+brew install mosquitto
+brew services start mosquitto
+```
+
+**Linux:**
+```bash
+sudo apt install mosquitto mosquitto-clients
+sudo systemctl start mosquitto
+```
+
+---
+
+### Step 2 — Python environment
 
 ```bash
-py -3.11 -m venv venv
-
 # Windows
+py -3.11 -m venv venv
 venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# macOS/Linux
-source venv/bin/activate && pip install -r requirements.txt
+# macOS / Linux
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 3. Verify everything works
+---
+
+### Step 3 — Verify connectivity
+
+Run this before anything else. It connects to Mosquitto, publishes a test message, and confirms it arrives back.
 
 ```bash
+# Windows
 venv\Scripts\python.exe mqtt_test.py
-# Expected: ✅ MQTT CONNECTIVITY TEST PASSED
+
+# macOS / Linux
+python mqtt_test.py
 ```
 
-### 4. Run the simulation
+Expected output:
+```
+✅ All Python imports OK
+✅ Connected to Mosquitto at localhost:1883
+✅ Received message: {"test": true, ...}
+══════════════════════════════════════════════════
+✅ MQTT CONNECTIVITY TEST PASSED
+   You can now start the full simulation.
+══════════════════════════════════════════════════
+```
 
-You need **three terminal windows**, all in the project root.
+---
 
-**Terminal 1 — Hub** (start first):
+### Step 4 — Run the simulation
+
+Open **three terminal windows** in the project root.
+
+**Terminal 1 — Start the hub first:**
 ```bash
 venv\Scripts\python.exe src/hub.py
 ```
-Expected output:
 ```
 [hub] Connected to broker at localhost:1883
 [hub] Subscribed to sensors/+/+
-[hub] 📡 node_1/temperature: 22.4°C
+[hub] 📡 node_1/temperature: 22.4°C       ← data starts flowing
+[hub] 📡 node_3/humidity: 58.1%
 ```
 
 **Terminal 2 — Launch all sensor nodes:**
 ```bash
 venv\Scripts\python.exe src/launch_nodes.py
 ```
-Spawns 5 nodes as separate processes. The hub terminal will start printing readings.
+```
+✅ node_1   (temperature) — PID 21564
+✅ node_2   (temperature) — PID 11088
+✅ node_3   (humidity   ) — PID 7896
+✅ node_4   (humidity   ) — PID 4208
+✅ node_5   (motion     ) — PID 3892
+```
 
-**Terminal 3 — Dashboard:**
+**Terminal 3 — Open the dashboard:**
 ```bash
 venv\Scripts\streamlit.exe run app.py
 ```
-Opens at **http://localhost:8501**
+Opens at **http://localhost:8501** — auto-refreshes every 3 seconds.
 
-### 5. Demo fault detection
+---
+
+### Step 5 — Demo fault detection 🔥
+
+This is the interesting part. Open a fourth terminal:
 
 ```bash
 # Kill node_3 — simulates a dead battery or lost connection
 venv\Scripts\python.exe src/fault_injector.py --kill node_3
-
-# After ~15 seconds, node_3 goes 🔴 RED on the dashboard
-# The hub logs: ❌ Node node_3 OFFLINE (no heartbeat for 15s)
-
-# Revive it
-venv\Scripts\python.exe src/fault_injector.py --revive node_3
-
-# node_3 goes 🟢 GREEN again
-# The hub logs: ✅ Node node_3 came back ONLINE
 ```
 
----
+Watch what happens:
+```
+# After ~15 seconds silence, the hub fires:
+[hub] ❌ Node node_3 OFFLINE (no heartbeat for 15s)
+[hub] 🔔 ALERT [offline] node_3: Node node_3 went offline
+```
 
-## Sensor simulation details
+The dashboard card for `node_3` turns **🔴 RED**.
 
-| Sensor | Behaviour |
-|--------|-----------|
-| Temperature | Slow random walk (±0.3°C per step), 3% chance of a spike (+3–8°C) |
-| Humidity | Slow random walk (±0.5% per step), clamped 20–90% |
-| Motion | Binary (0/1), ~5% trigger probability per reading |
+```bash
+# Bring it back
+venv\Scripts\python.exe src/fault_injector.py --revive node_3
+```
 
-Anomaly detection in the hub flags readings outside normal ranges and logs them as alerts on the dashboard.
+```
+# Hub immediately detects the returning heartbeat:
+[hub] ✅ Node node_3 came back ONLINE
+[hub] 🔔 ALERT [online] node_3: Node node_3 reconnected
+```
 
----
-
-## Troubleshooting
-
-**Connection refused on port 1883**
-→ Mosquitto isn't running. Run `net start mosquitto` as Administrator.
-
-**Dashboard shows "waiting for data"**
-→ Start `hub.py` first, then `launch_nodes.py`, then open the dashboard.
-
-**Nodes exit immediately**
-→ Test connectivity first: `venv\Scripts\python.exe mqtt_test.py`
+Card goes **🟢 GREEN**. The full cycle is logged in the alerts panel.
 
 ---
 
-## Future work / real-world path
+## 🌡 Sensor simulation details
 
-- **TLS + authentication** — production MQTT uses port 8883 with client certificates. This project intentionally omits auth for simplicity.
-- **Cloud broker** — swap `localhost:1883` for AWS IoT Core, HiveMQ Cloud, or EMQX to connect nodes over the internet.
-- **Real hardware** — the sensor node code runs unmodified on a Raspberry Pi. Just point `BROKER_HOST` at a real broker.
-- **Time-series DB** — replace SQLite with InfluxDB or TimescaleDB for production-scale workloads.
-- **Sleep mode** — nodes can simulate battery-saving sleep cycles; the hub uses published sleep schedules to avoid false-alarm timeouts during intentional dormant periods.
+| Sensor | Behaviour | Range |
+|--------|-----------|-------|
+| Temperature | Slow random walk ± 0.3°C per step, 3% chance of a sudden spike (+3–8°C) | 15°C – 35°C |
+| Humidity | Slow random walk ± 0.5% per step | 20% – 90% |
+| Motion | Binary trigger, ~5% probability per reading | 0 or 1 |
+
+The hub flags anomalies automatically:
+- Temperature > 30°C or < 15°C → alert logged
+- Humidity > 80% → alert logged
+- Motion triggered → alert logged
 
 ---
 
-## Why MQTT?
+## 🔧 Troubleshooting
 
-MQTT was designed in 1999 for monitoring oil pipelines over satellite links — low bandwidth, high latency, unreliable connections. Those constraints make it perfect for IoT:
+| Problem | Fix |
+|---------|-----|
+| `ConnectionRefusedError` on port 1883 | Run `net start mosquitto` as Administrator |
+| Dashboard shows "waiting for data" | Start `hub.py` before opening the dashboard |
+| Nodes exit immediately | Run `mqtt_test.py` first to verify broker is reachable |
+| `ModuleNotFoundError` | Run `pip install -r requirements.txt` inside your venv |
+| Port 1883 already in use | Another Mosquitto instance is running — check Services |
 
-- **Tiny overhead** — 2-byte fixed header vs. HTTP's kilobytes of headers
-- **Broker decoupling** — publishers and subscribers never connect to each other directly
-- **QoS levels** — guaranteed delivery even over unreliable networks
-- **Last Will** — broker can notify subscribers if a client disconnects unexpectedly
+---
 
-It's now the default protocol for AWS IoT, Azure IoT Hub, Google Cloud IoT, and most commercial smart home platforms.
+## 🗺 Future work
+
+This is a v1 local simulation. The path to production:
+
+- **🔒 TLS + Auth** — production MQTT uses port 8883 with client certificates or username/password. Noted in code comments throughout.
+- **☁️ Cloud broker** — swap `localhost:1883` for AWS IoT Core, HiveMQ Cloud, or EMQX. The node/hub code is broker-agnostic.
+- **🍓 Real hardware** — `sensor_node.py` runs unmodified on a Raspberry Pi. Point `BROKER_HOST` at a real broker and connect actual sensors.
+- **📈 Time-series DB** — replace SQLite with InfluxDB or TimescaleDB for production-scale workloads and Grafana dashboards.
+- **😴 Sleep mode** — already partially implemented. Nodes publish their sleep schedule; the hub suppresses false-alarm timeouts during intentional dormant periods.
+
+---
+
+## 📖 Why MQTT?
+
+MQTT was designed in 1999 for monitoring oil pipelines over satellite links — high latency, low bandwidth, unreliable connections, constrained devices. Those exact constraints describe IoT hardware.
+
+**Compared to HTTP:**
+
+| | MQTT | HTTP |
+|--|------|------|
+| Header overhead | 2 bytes fixed | ~800 bytes minimum |
+| Connection model | Persistent | Request/response |
+| Broker decoupling | ✅ Yes | ❌ No |
+| QoS guarantees | 3 levels | None built-in |
+| Idle detection | Last Will & Testament | Polling |
+
+Today MQTT is the default protocol for AWS IoT Core, Azure IoT Hub, Google Cloud IoT, and most commercial smart home platforms.
+
+---
+
+<div align="center">
+
+Built by **[Eddie](https://github.com/Eddiegah)** · Python · MQTT · Distributed Systems
+
+*If this was useful, leave a ⭐*
+
+</div>
