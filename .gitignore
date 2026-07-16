@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+.venv/
+
+# SQLite database (runtime data, not source)
+data/sensor_data.db
+data/pids/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
