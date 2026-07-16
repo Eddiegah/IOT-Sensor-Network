@@ -52,6 +52,18 @@ Built with the actual MQTT protocol used by AWS IoT, Tesla, and billions of embe
 
 ---
 
+## 🎥 Demo
+
+<div align="center">
+
+[![IoT Sensor Network Demo](https://img.youtube.com/vi/qpvrJyibhpg/maxresdefault.jpg)](https://youtu.be/qpvrJyibhpg)
+
+*Click to watch — live fault detection, node recovery, and real-time dashboard*
+
+</div>
+
+---
+
 ## ✨ Why this project exists
 
 Most IoT tutorials fake it — one script, fake pub/sub, no real network, no real protocol.
