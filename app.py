@@ -1,16 +1,7 @@
 """
-app.py — Live IoT Sensor Network Dashboard (Streamlit)
-
-Reads from the SQLite database written by hub.py and displays:
-  1. Node status grid — online/offline (green/red), current reading, last-seen
-  2. Time-series chart — rolling history of sensor readings per node
-  3. Alerts panel — recent fault events and anomalies
-
-Auto-refreshes every 3 seconds using Streamlit's st.rerun() via a fragment
-so only the data sections update, not the full page.
-
-To run:
-  venv\\Scripts\\streamlit.exe run app.py
+app.py — IoT Sensor Network — Live Dashboard
+Professional dark UI with custom CSS, animated status indicators,
+metric cards, and real-time Plotly charts.
 """
 
 import sqlite3
@@ -24,303 +15,629 @@ import streamlit as st
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 DB_PATH = Path(__file__).parent / "data" / "sensor_data.db"
-REFRESH_INTERVAL = 3       # seconds between auto-refreshes
-CHART_MAX_POINTS = 200     # max readings shown per node in charts
-OFFLINE_TIMEOUT_SECS = 15  # must match hub.py
+REFRESH_INTERVAL = 3
+CHART_MAX_POINTS = 150
 
-# ─── Page setup ───────────────────────────────────────────────────────────────
+# ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="IoT Sensor Network Dashboard",
+    page_title="IoT Network Monitor",
     page_icon="📡",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-st.title("📡 IoT Sensor Network — Live Dashboard")
-st.caption(
-    "Simulated multi-node sensor network using real MQTT (Mosquitto broker). "
-    "Hub detects offline nodes via heartbeat timeouts."
-)
+# ─── Custom CSS ───────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+  /* ── Global ── */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  html, body, [class*="css"] {
+      font-family: 'Inter', sans-serif;
+  }
+
+  /* Hide Streamlit chrome */
+  #MainMenu, footer, header { visibility: hidden; }
+  .block-container { padding: 1.5rem 2rem 2rem 2rem; }
+
+  /* ── Header banner ── */
+  .header-banner {
+      background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+      border: 1px solid #2a2a4a;
+      border-radius: 16px;
+      padding: 28px 36px;
+      margin-bottom: 24px;
+      position: relative;
+      overflow: hidden;
+  }
+  .header-banner::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(ellipse at 70% 50%, rgba(99,102,241,0.08) 0%, transparent 60%);
+      pointer-events: none;
+  }
+  .header-title {
+      font-size: 1.9rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      letter-spacing: -0.5px;
+      margin: 0 0 4px 0;
+  }
+  .header-subtitle {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin: 0;
+      font-weight: 400;
+  }
+  .header-live-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #22c55e;
+      border-radius: 50%;
+      margin-right: 6px;
+      animation: pulse-green 2s infinite;
+  }
+  @keyframes pulse-green {
+      0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.6); }
+      70%  { box-shadow: 0 0 0 8px rgba(34,197,94,0); }
+      100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+  }
+
+  /* ── Stat pills (top row) ── */
+  .stat-pill {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 18px 20px;
+      text-align: center;
+  }
+  .stat-pill .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 4px;
+  }
+  .stat-pill .stat-label {
+      font-size: 0.72rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 500;
+  }
+  .stat-green  { color: #22c55e; }
+  .stat-red    { color: #ef4444; }
+  .stat-yellow { color: #f59e0b; }
+  .stat-blue   { color: #6366f1; }
+  .stat-white  { color: #f1f5f9; }
+
+  /* ── Section headers ── */
+  .section-header {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin: 28px 0 12px 0;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #1e293b;
+  }
+
+  /* ── Node cards ── */
+  .node-card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 10px;
+      transition: border-color 0.3s ease;
+      position: relative;
+      overflow: hidden;
+  }
+  .node-card:hover {
+      border-color: #334155;
+  }
+  .node-card-online  { border-left: 3px solid #22c55e; }
+  .node-card-offline { border-left: 3px solid #ef4444; }
+  .node-card-sleeping{ border-left: 3px solid #f59e0b; }
+  .node-card-unknown { border-left: 3px solid #475569; }
+
+  .node-name {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #f1f5f9;
+      margin-bottom: 2px;
+      font-family: 'JetBrains Mono', monospace;
+  }
+  .node-sensor-type {
+      font-size: 0.72rem;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 12px;
+  }
+  .node-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      line-height: 1;
+      margin-bottom: 2px;
+      font-family: 'JetBrains Mono', monospace;
+  }
+  .node-unit {
+      font-size: 0.8rem;
+      color: #64748b;
+  }
+  .node-last-seen {
+      font-size: 0.72rem;
+      color: #334155;
+      margin-top: 10px;
+  }
+
+  /* Status indicator */
+  .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 10px;
+  }
+  .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+  }
+  .dot-online   { background: #22c55e; animation: pulse-green 2s infinite; }
+  .dot-offline  { background: #ef4444; }
+  .dot-sleeping { background: #f59e0b; animation: pulse-amber 2s infinite; }
+  .dot-unknown  { background: #475569; }
+  @keyframes pulse-amber {
+      0%   { box-shadow: 0 0 0 0 rgba(245,158,11,0.6); }
+      70%  { box-shadow: 0 0 0 6px rgba(245,158,11,0); }
+      100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+  }
+  .text-online   { color: #22c55e; }
+  .text-offline  { color: #ef4444; }
+  .text-sleeping { color: #f59e0b; }
+  .text-unknown  { color: #475569; }
+
+  /* ── Alert rows ── */
+  .alert-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      font-size: 0.82rem;
+  }
+  .alert-offline { background: rgba(239,68,68,0.08);  border-left: 3px solid #ef4444; }
+  .alert-online  { background: rgba(34,197,94,0.08);  border-left: 3px solid #22c55e; }
+  .alert-anomaly { background: rgba(245,158,11,0.08); border-left: 3px solid #f59e0b; }
+  .alert-info    { background: rgba(99,102,241,0.08); border-left: 3px solid #6366f1; }
+
+  .alert-time {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: #475569;
+      white-space: nowrap;
+      margin-top: 1px;
+  }
+  .alert-node {
+      font-weight: 600;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+  }
+  .alert-msg { color: #cbd5e1; }
+
+  /* ── Sensor icon ── */
+  .sensor-icon {
+      font-size: 1.4rem;
+      margin-bottom: 6px;
+  }
+
+  /* ── No-data state ── */
+  .no-data-box {
+      background: #0f172a;
+      border: 1px dashed #1e293b;
+      border-radius: 14px;
+      padding: 48px;
+      text-align: center;
+      color: #334155;
+  }
+  .no-data-box .no-data-icon { font-size: 2.5rem; margin-bottom: 12px; }
+  .no-data-box .no-data-title { font-size: 1rem; font-weight: 600; color: #475569; margin-bottom: 6px; }
+  .no-data-box .no-data-cmd {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      background: #1e293b;
+      padding: 8px 14px;
+      border-radius: 6px;
+      display: inline-block;
+      color: #94a3b8;
+      margin-top: 8px;
+  }
+
+  /* ── Divider ── */
+  hr { border-color: #1e293b; margin: 20px 0; }
+
+  /* ── Timestamp footer ── */
+  .refresh-footer {
+      font-size: 0.72rem;
+      color: #1e293b;
+      text-align: right;
+      margin-top: 8px;
+      font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+""", unsafe_allow_html=True)
 
 
 # ─── Database helpers ─────────────────────────────────────────────────────────
 
-def get_conn() -> sqlite3.Connection:
-    """Return a read-only connection to the SQLite database."""
+def get_conn():
     if not DB_PATH.exists():
         return None
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
-
-def db_available() -> bool:
-    return DB_PATH.exists()
-
-
 def fetch_node_status(conn) -> pd.DataFrame:
-    """Fetch the latest state for every known node."""
-    df = pd.read_sql_query(
-        "SELECT * FROM node_status ORDER BY node_id",
-        conn
-    )
-    return df
+    return pd.read_sql_query("SELECT * FROM node_status ORDER BY node_id", conn)
 
-
-def fetch_recent_readings(conn, limit: int = CHART_MAX_POINTS) -> pd.DataFrame:
-    """Fetch the most recent readings for charting."""
-    df = pd.read_sql_query(
-        f"""
+def fetch_recent_readings(conn) -> pd.DataFrame:
+    df = pd.read_sql_query(f"""
         SELECT node_id, sensor_type, value, unit, timestamp
-        FROM readings
-        ORDER BY id DESC
-        LIMIT {limit * 10}
-        """,
-        conn
-    )
+        FROM readings ORDER BY id DESC LIMIT {CHART_MAX_POINTS * 10}
+    """, conn)
     if not df.empty:
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         df = df.sort_values("timestamp")
     return df
 
-
-def fetch_alerts(conn, limit: int = 30) -> pd.DataFrame:
-    """Fetch the most recent alerts."""
-    df = pd.read_sql_query(
-        f"""
+def fetch_alerts(conn, limit=25) -> pd.DataFrame:
+    return pd.read_sql_query(f"""
         SELECT node_id, alert_type, message, timestamp
-        FROM alerts
-        ORDER BY id DESC
-        LIMIT {limit}
-        """,
-        conn
-    )
-    return df
+        FROM alerts ORDER BY id DESC LIMIT {limit}
+    """, conn)
 
+def fetch_total_readings(conn) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM readings").fetchone()
+    return row[0] if row else 0
 
-# ─── UI helpers ───────────────────────────────────────────────────────────────
-
-def status_badge(status: str) -> str:
-    """Return a colored emoji badge for a node status."""
-    badges = {
-        "online":   "🟢 ONLINE",
-        "offline":  "🔴 OFFLINE",
-        "sleeping": "🟡 SLEEPING",
-        "unknown":  "⚪ UNKNOWN",
-    }
-    return badges.get(status, f"⚪ {status.upper()}")
-
-
-def format_last_seen(last_seen_str: str | None) -> str:
-    """Show how long ago the node was last seen."""
-    if not last_seen_str:
+def format_last_seen(ts_str):
+    if not ts_str:
         return "never"
     try:
-        last_seen = datetime.fromisoformat(last_seen_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        delta = now - last_seen
-        secs = int(delta.total_seconds())
-        if secs < 5:
-            return "just now"
-        elif secs < 60:
-            return f"{secs}s ago"
-        elif secs < 3600:
-            return f"{secs // 60}m ago"
-        else:
-            return f"{secs // 3600}h ago"
+        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+        if secs < 5:   return "just now"
+        if secs < 60:  return f"{secs}s ago"
+        if secs < 3600: return f"{secs // 60}m ago"
+        return f"{secs // 3600}h ago"
     except Exception:
-        return last_seen_str
+        return ts_str
 
 
-# ─── Main dashboard (wrapped in fragment for partial rerun) ───────────────────
+# ─── Sensor metadata ──────────────────────────────────────────────────────────
 
-def dashboard():
-    """
-    Dashboard content. Called on every page rerun.
-    Auto-refresh is handled at the bottom of the file via time.sleep + st.rerun().
-    """
-    if not db_available():
-        st.warning(
-            "⚠️ Database not found. Make sure the hub is running:\n\n"
-            "```\nvenv\\Scripts\\python.exe src/hub.py\n```"
-        )
-        return
+SENSOR_ICONS = {
+    "temperature": "🌡️",
+    "humidity":    "💧",
+    "motion":      "👁️",
+}
 
+SENSOR_COLORS = {
+    "temperature": "#f97316",
+    "humidity":    "#38bdf8",
+    "motion":      "#a78bfa",
+}
+
+NODE_TRACE_COLORS = [
+    "#6366f1", "#22c55e", "#f97316",
+    "#38bdf8", "#f43f5e", "#a78bfa",
+]
+
+
+# ─── Dashboard ────────────────────────────────────────────────────────────────
+
+def render():
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="header-banner">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div class="header-title">
+            📡 IoT Sensor Network
+          </div>
+          <div class="header-subtitle">
+            Real-time monitoring · MQTT over Mosquitto · Heartbeat fault detection
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:0.72rem; color:#334155; font-family:'JetBrains Mono',monospace;">
+            LIVE
+          </div>
+          <div style="display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-top:4px;">
+            <span class="header-live-dot"></span>
+            <span style="font-size:0.8rem; color:#475569;">localhost:1883</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Load data ─────────────────────────────────────────────────────────────
     conn = get_conn()
+
     if conn is None:
-        st.error("Could not open database.")
+        st.markdown("""
+        <div class="no-data-box">
+          <div class="no-data-icon">🔌</div>
+          <div class="no-data-title">Database not found</div>
+          <div style="color:#334155; font-size:0.82rem; margin-bottom:8px;">
+            Start the hub to begin collecting data
+          </div>
+          <div class="no-data-cmd">venv\Scripts\python.exe src/hub.py</div>
+        </div>
+        """, unsafe_allow_html=True)
+        time.sleep(REFRESH_INTERVAL)
+        st.rerun()
         return
 
-    # Check if Mosquitto is reachable by seeing if there's any data
-    node_df = fetch_node_status(conn)
-    readings_df = fetch_recent_readings(conn)
-    alerts_df = fetch_alerts(conn)
-
+    node_df      = fetch_node_status(conn)
+    readings_df  = fetch_recent_readings(conn)
+    alerts_df    = fetch_alerts(conn)
+    total_msgs   = fetch_total_readings(conn)
     conn.close()
 
-    # ── Broker / hub status bar ───────────────────────────────────────────────
-    col_status, col_refresh = st.columns([4, 1])
-    with col_status:
-        if node_df.empty:
-            st.info(
-                "Waiting for data... Is the hub running? "
-                "(`venv\\Scripts\\python.exe src/hub.py`)\n\n"
-                "Also verify Mosquitto is running on port 1883."
-            )
-        else:
-            online = len(node_df[node_df["status"] == "online"])
-            offline = len(node_df[node_df["status"] == "offline"])
-            sleeping = len(node_df[node_df["status"] == "sleeping"])
-            total = len(node_df)
-            st.markdown(
-                f"**Network:** {total} nodes — "
-                f"🟢 {online} online  "
-                f"🔴 {offline} offline  "
-                f"🟡 {sleeping} sleeping"
-            )
-    with col_refresh:
-        st.caption(f"🔄 Auto-refresh: {REFRESH_INTERVAL}s")
-
+    # ── Waiting state ─────────────────────────────────────────────────────────
     if node_df.empty:
+        st.markdown("""
+        <div class="no-data-box">
+          <div class="no-data-icon">⏳</div>
+          <div class="no-data-title">Waiting for sensor data</div>
+          <div style="color:#334155; font-size:0.82rem; margin-bottom:8px;">
+            Hub is running — launch the sensor nodes to start
+          </div>
+          <div class="no-data-cmd">venv\Scripts\python.exe src/launch_nodes.py</div>
+        </div>
+        """, unsafe_allow_html=True)
+        time.sleep(REFRESH_INTERVAL)
+        st.rerun()
         return
 
-    st.divider()
+    # ── Stat pills ────────────────────────────────────────────────────────────
+    n_online   = len(node_df[node_df["status"] == "online"])
+    n_offline  = len(node_df[node_df["status"] == "offline"])
+    n_sleeping = len(node_df[node_df["status"] == "sleeping"])
+    n_total    = len(node_df)
+    n_alerts   = len(alerts_df)
 
-    # ── Node status grid ──────────────────────────────────────────────────────
-    st.subheader("Node Status")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.markdown(f"""
+        <div class="stat-pill">
+          <div class="stat-value stat-white">{n_total}</div>
+          <div class="stat-label">Total Nodes</div>
+        </div>""", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="stat-pill">
+          <div class="stat-value stat-green">{n_online}</div>
+          <div class="stat-label">Online</div>
+        </div>""", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""
+        <div class="stat-pill">
+          <div class="stat-value stat-red">{n_offline}</div>
+          <div class="stat-label">Offline</div>
+        </div>""", unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""
+        <div class="stat-pill">
+          <div class="stat-value stat-yellow">{n_sleeping}</div>
+          <div class="stat-label">Sleeping</div>
+        </div>""", unsafe_allow_html=True)
+    with c5:
+        st.markdown(f"""
+        <div class="stat-pill">
+          <div class="stat-value stat-blue">{total_msgs:,}</div>
+          <div class="stat-label">Messages</div>
+        </div>""", unsafe_allow_html=True)
 
-    cols = st.columns(min(len(node_df), 5))
-    for i, row in node_df.iterrows():
-        col = cols[i % len(cols)]
-        status = row["status"] or "unknown"
+    # ── Two-column layout: nodes | alerts ─────────────────────────────────────
+    left_col, right_col = st.columns([3, 2], gap="large")
 
-        # Card background color via markdown hack
-        border_color = {
-            "online": "#28a745",
-            "offline": "#dc3545",
-            "sleeping": "#ffc107",
-        }.get(status, "#6c757d")
+    # ── LEFT: Node cards ──────────────────────────────────────────────────────
+    with left_col:
+        st.markdown('<div class="section-header">Node Status</div>', unsafe_allow_html=True)
 
-        with col:
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid {border_color};
-                    padding: 10px 12px;
-                    border-radius: 4px;
-                    background: #1e1e1e;
-                    margin-bottom: 8px;
-                ">
-                    <b>{row['node_id']}</b><br>
-                    <span style="color:{border_color}">{status_badge(status)}</span><br>
-                    <small>
-                        {row['sensor_type'] or '—'}: 
-                        <b>{row['last_value'] if row['last_value'] is not None else '—'}
-                        {row['last_unit'] or ''}</b>
-                    </small><br>
-                    <small style="color:#888">Last seen: {format_last_seen(row['last_seen'])}</small>
+        for _, row in node_df.iterrows():
+            status      = row["status"] or "unknown"
+            sensor_type = row["sensor_type"] or "unknown"
+            icon        = SENSOR_ICONS.get(sensor_type, "📊")
+            value       = row["last_value"]
+            unit        = row["last_unit"] or ""
+            last_seen   = format_last_seen(row["last_seen"])
+
+            # Format value display
+            if value is not None:
+                if sensor_type == "motion":
+                    val_display = "DETECTED" if int(value) == 1 else "CLEAR"
+                    unit_display = ""
+                else:
+                    val_display  = f"{value:.1f}"
+                    unit_display = unit
+            else:
+                val_display  = "—"
+                unit_display = ""
+
+            st.markdown(f"""
+            <div class="node-card node-card-{status}">
+              <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                  <div class="sensor-icon">{icon}</div>
+                  <div class="node-name">{row['node_id']}</div>
+                  <div class="node-sensor-type">{sensor_type}</div>
+                  <div class="status-indicator">
+                    <span class="dot dot-{status}"></span>
+                    <span class="text-{status}">{status.upper()}</span>
+                  </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                <div style="text-align:right;">
+                  <div class="node-value">{val_display}</div>
+                  <div class="node-unit">{unit_display}</div>
+                  <div class="node-last-seen">Last seen: {last_seen}</div>
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    st.divider()
+    # ── RIGHT: Alerts panel ───────────────────────────────────────────────────
+    with right_col:
+        st.markdown('<div class="section-header">Alert Log</div>', unsafe_allow_html=True)
 
-    # ── Time-series charts ────────────────────────────────────────────────────
-    st.subheader("Sensor Readings Over Time")
+        if alerts_df.empty:
+            st.markdown("""
+            <div style="
+                background:#0f172a; border:1px solid #1e293b;
+                border-radius:12px; padding:32px; text-align:center;
+            ">
+                <div style="font-size:1.8rem; margin-bottom:8px;">✅</div>
+                <div style="color:#22c55e; font-size:0.85rem; font-weight:600;">
+                    All nodes nominal
+                </div>
+                <div style="color:#334155; font-size:0.75rem; margin-top:4px;">
+                    No alerts triggered
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            for _, alert in alerts_df.iterrows():
+                atype = alert["alert_type"]
+                icon_map  = {"offline": "🔴", "online": "🟢", "anomaly": "⚠️"}
+                icon      = icon_map.get(atype, "ℹ️")
+                css_class = f"alert-{atype}" if atype in ["offline", "online", "anomaly"] else "alert-info"
+
+                ts = alert["timestamp"] or ""
+                try:
+                    ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%H:%M:%S")
+                except Exception:
+                    pass
+
+                st.markdown(f"""
+                <div class="alert-row {css_class}">
+                  <div style="font-size:1rem; margin-top:1px;">{icon}</div>
+                  <div style="flex:1; min-width:0;">
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                      <span class="alert-node">{alert['node_id']}</span>
+                      <span class="alert-time">{ts}</span>
+                    </div>
+                    <div class="alert-msg">{alert['message']}</div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ── Charts ────────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Sensor Readings — Live Time Series</div>',
+                unsafe_allow_html=True)
 
     if readings_df.empty:
-        st.info("No readings recorded yet.")
+        st.markdown("""
+        <div style="color:#334155; font-size:0.85rem; padding:20px 0;">
+            No readings recorded yet.
+        </div>""", unsafe_allow_html=True)
     else:
-        # Group by sensor_type for separate charts
-        for sensor_type in sorted(readings_df["sensor_type"].unique()):
+        sensor_types = sorted(readings_df["sensor_type"].unique())
+        chart_cols = st.columns(len(sensor_types))
+
+        for col, sensor_type in zip(chart_cols, sensor_types):
             type_df = readings_df[readings_df["sensor_type"] == sensor_type]
+            color   = SENSOR_COLORS.get(sensor_type, "#6366f1")
+            icon    = SENSOR_ICONS.get(sensor_type, "📊")
+            unit    = type_df["unit"].iloc[0] if not type_df.empty else ""
 
             fig = go.Figure()
 
-            # One trace per node, limited to recent points
-            for node_id in sorted(type_df["node_id"].unique()):
-                node_df_sub = (
-                    type_df[type_df["node_id"] == node_id]
-                    .tail(CHART_MAX_POINTS)
-                )
-                if node_df_sub.empty:
+            for idx, node_id in enumerate(sorted(type_df["node_id"].unique())):
+                sub = type_df[type_df["node_id"] == node_id].tail(CHART_MAX_POINTS)
+                if sub.empty:
                     continue
-
+                trace_color = NODE_TRACE_COLORS[idx % len(NODE_TRACE_COLORS)]
                 fig.add_trace(go.Scatter(
-                    x=node_df_sub["timestamp"],
-                    y=node_df_sub["value"],
-                    mode="lines+markers",
+                    x=sub["timestamp"],
+                    y=sub["value"],
+                    mode="lines",
                     name=node_id,
-                    marker=dict(size=4),
-                    line=dict(width=1.5),
+                    line=dict(width=2, color=trace_color),
+                    fill="tozeroy",
+                    fillcolor=f"rgba({int(trace_color[1:3],16)},"
+                              f"{int(trace_color[3:5],16)},"
+                              f"{int(trace_color[5:7],16)},0.04)",
+                    hovertemplate=f"<b>{node_id}</b><br>%{{y:.2f}}{unit}<br>%{{x}}<extra></extra>",
                 ))
 
-            unit = type_df["unit"].iloc[0] if not type_df.empty else ""
             fig.update_layout(
-                title=f"{sensor_type.capitalize()} readings",
-                xaxis_title="Time (UTC)",
-                yaxis_title=f"Value ({unit})",
-                template="plotly_dark",
-                height=300,
-                margin=dict(l=40, r=20, t=40, b=40),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
-
-    # ── Alerts panel ─────────────────────────────────────────────────────────
-    st.subheader("Recent Alerts & Events")
-
-    if alerts_df.empty:
-        st.success("No alerts — all nodes nominal.")
-    else:
-        for _, alert in alerts_df.iterrows():
-            alert_type = alert["alert_type"]
-            icon = {
-                "offline": "🔴",
-                "online":  "🟢",
-                "anomaly": "⚠️",
-            }.get(alert_type, "ℹ️")
-
-            # Color-coded alert rows
-            bg = {
-                "offline": "#3d0000",
-                "online":  "#003d00",
-                "anomaly": "#3d2600",
-            }.get(alert_type, "#1e1e1e")
-
-            ts = alert["timestamp"] or ""
-            try:
-                ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                ts = ts_dt.strftime("%H:%M:%S")
-            except Exception:
-                pass
-
-            st.markdown(
-                f"""
-                <div style="
-                    background:{bg};
-                    padding:6px 10px;
-                    border-radius:3px;
-                    margin-bottom:4px;
-                    font-size:0.85rem;
-                ">
-                    {icon} <b>[{alert_type.upper()}]</b>
-                    <span style="color:#888">{ts}</span>
-                    — <b>{alert['node_id']}</b>: {alert['message']}
-                </div>
-                """,
-                unsafe_allow_html=True,
+                title=dict(
+                    text=f"{icon}  {sensor_type.capitalize()}",
+                    font=dict(size=13, color="#94a3b8", family="Inter"),
+                    x=0,
+                ),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="#080d18",
+                font=dict(family="Inter", color="#64748b", size=11),
+                height=260,
+                margin=dict(l=10, r=10, t=40, b=10),
+                xaxis=dict(
+                    showgrid=True, gridcolor="#0f172a",
+                    showline=False, zeroline=False,
+                    tickfont=dict(size=9, color="#334155"),
+                    title="",
+                ),
+                yaxis=dict(
+                    showgrid=True, gridcolor="#0f172a",
+                    showline=False, zeroline=False,
+                    tickfont=dict(size=9, color="#334155"),
+                    title=unit,
+                    titlefont=dict(size=9, color="#334155"),
+                ),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom", y=1.0,
+                    xanchor="left", x=0,
+                    font=dict(size=9, color="#475569"),
+                    bgcolor="rgba(0,0,0,0)",
+                ),
+                hovermode="x unified",
+                hoverlabel=dict(
+                    bgcolor="#1e293b",
+                    font_size=11,
+                    font_family="JetBrains Mono",
+                ),
             )
 
-    # Show last-updated timestamp
-    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
+            with col:
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div class="refresh-footer">
+        refreshed at {datetime.now().strftime('%H:%M:%S')} · every {REFRESH_INTERVAL}s
+    </div>
+    """, unsafe_allow_html=True)
 
 
-# ─── Run ─────────────────────────────────────────────────────────────────────
-dashboard()
-
-# Auto-refresh: sleep then trigger a full page rerun
+# ─── Run ──────────────────────────────────────────────────────────────────────
+render()
 time.sleep(REFRESH_INTERVAL)
 st.rerun()
